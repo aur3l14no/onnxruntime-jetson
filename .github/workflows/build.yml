@@ -1,0 +1,71 @@
+name: Build ONNX Runtime GPU wheel (aarch64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ort_version:
+        description: "ONNX Runtime version tag to build"
+        default: "1.27.0"
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install CUDA toolkit (sbsa)
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/sbsa/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cuda-toolkit-12-6 || \
+            sudo apt-get install -y --no-install-recommends cuda-toolkit-12-8
+          CUDA_HOME=$(ls -d /usr/local/cuda-* 2>/dev/null | head -1)
+          [ -n "$CUDA_HOME" ] || { echo "CUDA toolkit not found"; exit 1; }
+          [ -e /usr/local/cuda ] || sudo ln -s "$CUDA_HOME" /usr/local/cuda
+          "$CUDA_HOME/bin/nvcc" --version
+          echo "CUDA_HOME=$CUDA_HOME" >> "$GITHUB_ENV"
+
+      - name: Install cuDNN 9.3.0.75 (sbsa)
+        run: |
+          curl -fL --retry 3 -o cudnn.tar.xz \
+            https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/linux-sbsa/cudnn-linux-sbsa-9.3.0.75_cuda12-archive.tar.xz
+          echo "1226dd9b989c898638552963d000a3cfbb8a0a0cb9baf8cb09e6abd77ed7d639  cudnn.tar.xz" | sha256sum -c
+          mkdir -p cudnn
+          tar -xJf cudnn.tar.xz -C cudnn --strip-components=1
+          echo "CUDNN_HOME=$PWD/cudnn" >> "$GITHUB_ENV"
+
+      - name: Install Python build deps
+        run: python -m pip install --upgrade pip && python -m pip install numpy wheel setuptools cmake
+
+      - name: Clone ONNX Runtime
+        run: |
+          git clone --depth 1 --branch "v${{ inputs.ort_version || '1.27.0' }}" \
+            https://github.com/microsoft/onnxruntime.git ort
+
+      - name: Build wheel (CUDA EP, sm_87)
+        run: |
+          cd ort
+          ./build.sh --config Release --build_wheel --use_cuda \
+            --cuda_home "$CUDA_HOME" \
+            --cudnn_home "$CUDNN_HOME" \
+            --parallel --skip_tests --skip_submodule_sync \
+            --cmake_extra_defines CMAKE_CUDA_ARCHITECTURES=87
+          ls -la build/Linux/Release/dist/
+          sha256sum build/Linux/Release/dist/*.whl
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: onnxruntime-gpu-cp312-wheel
+          path: ort/build/Linux/Release/dist/*.whl
+          if-no-files-found: error
