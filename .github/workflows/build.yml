@@ -27,8 +27,8 @@ jobs:
           wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/sbsa/cuda-keyring_1.1-1_all.deb
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cuda-toolkit-12-6 || \
-            sudo apt-get install -y --no-install-recommends cuda-toolkit-12-8
+          # ORT 1.27 pins CUTLASS 4.4.2 whose sm100/sm103 kernels need nvcc 12.8+
+          sudo apt-get install -y --no-install-recommends cuda-toolkit-12-8
           CUDA_HOME=$(ls -d /usr/local/cuda-* 2>/dev/null | head -1)
           [ -n "$CUDA_HOME" ] || { echo "CUDA toolkit not found"; exit 1; }
           [ -e /usr/local/cuda ] || sudo ln -s "$CUDA_HOME" /usr/local/cuda
